@@ -1,0 +1,9 @@
+{
+    "mcpServers": {
+        "security_analyst": {
+            "name": "Security Analyst",
+            "type": "stdio",
+            "command": "/usr/local/bin/mcp-osv"
+        }
+    }
+}
