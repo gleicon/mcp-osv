@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -97,6 +98,82 @@ func isSafePath(path string) (bool, string) {
 
 	// Path exists and is accessible
 	return true, ""
+}
+
+// SemgrepResult represents the JSON output from semgrep
+type SemgrepResult struct {
+	Results []struct {
+		CheckID  string `json:"check_id"`
+		Path     string `json:"path"`
+		Start    struct {
+			Line int `json:"line"`
+		} `json:"start"`
+		End struct {
+			Line int `json:"line"`
+		} `json:"end"`
+		Extra struct {
+			Message  string `json:"message"`
+			Severity string `json:"severity"`
+		} `json:"extra"`
+	} `json:"results"`
+}
+
+var semgrepAvailable bool
+
+func init() {
+	// Check if semgrep is available
+	_, err := exec.LookPath("semgrep")
+	semgrepAvailable = err == nil
+	if !semgrepAvailable {
+		log.Println("Semgrep not found in PATH. Static code analysis will be limited.")
+	}
+}
+
+func runSemgrep(path string) (string, error) {
+	if !semgrepAvailable {
+		return "\n=== Semgrep Analysis ===\n⚠️  Semgrep not installed. Static code analysis skipped.\nInstall Semgrep for enhanced security analysis.\n", nil
+	}
+
+	var result strings.Builder
+	result.WriteString("\n=== Semgrep Analysis ===\n")
+
+	cmd := exec.Command("semgrep", 
+		"--config=auto",
+		"--json",
+		"--severity=WARNING",
+		"--quiet",
+		path)
+	
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+			return "", fmt.Errorf("semgrep error: %s", exitErr.Stderr)
+		}
+		return "", fmt.Errorf("failed to run semgrep: %v", err)
+	}
+
+	var semgrepResult SemgrepResult
+	if err := json.Unmarshal(output, &semgrepResult); err != nil {
+		return "", fmt.Errorf("failed to parse semgrep output: %v", err)
+	}
+
+	// Add information about what was scanned
+	result.WriteString("Running Semgrep security analysis...\n")
+	
+	if len(semgrepResult.Results) == 0 {
+		result.WriteString("✅ No security issues found by Semgrep\n")
+		return result.String(), nil
+	}
+
+	result.WriteString(fmt.Sprintf("Found %d potential security issues:\n\n", len(semgrepResult.Results)))
+	for _, finding := range semgrepResult.Results {
+		result.WriteString(fmt.Sprintf("⚠️  %s\n", finding.CheckID))
+		result.WriteString(fmt.Sprintf("   Severity: %s\n", finding.Extra.Severity))
+		result.WriteString(fmt.Sprintf("   File: %s (lines %d-%d)\n", finding.Path, finding.Start.Line, finding.End.Line))
+		result.WriteString(fmt.Sprintf("   Message: %s\n\n", finding.Extra.Message))
+	}
+
+	return result.String(), nil
 }
 
 func main() {
@@ -252,6 +329,14 @@ func analyzeSecurityHandler(ctx context.Context, request mcp.CallToolRequest) (*
 		// Handle directory
 		result.WriteString(fmt.Sprintf("Security analysis for directory: %s\n\n", absPath))
 		
+		// Run Semgrep analysis for the directory
+		semgrepResult, semgrepErr := runSemgrep(absPath)
+		if semgrepErr != nil {
+			result.WriteString(fmt.Sprintf("Error running Semgrep: %v\n", semgrepErr))
+		} else {
+			result.WriteString(semgrepResult)
+		}
+		
 		// Walk through the directory
 		err := filepath.Walk(absPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -320,8 +405,8 @@ func analyzeFile(filePath string) (string, error) {
 			desc:    "Potential hardcoded credentials found",
 		},
 		"SQL injection risk": {
-			pattern: `(?i)(select|insert|update|delete).*\+.*\+`,
-			desc:    "Possible SQL injection risk - string concatenation in query",
+			pattern: `(?i)(db\.Query|db\.Exec|sql\.Open)\s*\(\s*([^,]+\+|fmt\.Sprintf).*?(SELECT|INSERT|UPDATE|DELETE)`,
+			desc:    "Possible SQL injection risk - using string concatenation or formatting in database query",
 		},
 		"Insecure HTTP": {
 			pattern: `http://[^/]*\.[^/]*`,

@@ -8,6 +8,33 @@ A Model Context Protocol (MCP) server that provides security analysis capabiliti
 - Basic security analysis of code files
 - Integration with AI models for security insights
 - MCP protocol support for seamless integration with various AI tools
+- Optional static code analysis using Semgrep (if installed)
+
+## Requirements
+
+### Core Requirements
+```bash
+make deps
+make install
+```
+
+### Optional: Semgrep Installation
+For enhanced static code analysis, you can install Semgrep:
+
+#### macOS
+```bash
+brew install semgrep
+```
+
+#### Linux
+```bash
+python3 -m pip install semgrep
+```
+
+#### Other platforms
+Visit [Semgrep Installation Guide](https://semgrep.dev/docs/getting-started/) for detailed instructions.
+
+The MCP server will work without Semgrep installed, but will skip the static analysis portion when analyzing directories.
 
 ## Installation
 
