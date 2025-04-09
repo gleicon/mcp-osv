@@ -77,6 +77,22 @@ To test the security analysis capabilities:
 
 The server will process your requests and provide security insights through the MCP protocol.
 
+
+## Connect to Claude
+
+Edit the config file and add the following section (that's the whole file, consider the mcp_osv section if you already have other tools installed.)
+
+```json
+{
+    "mcpServers": {
+        "mcp_osv": {
+            "command": "/usr/local/bin/mcp-osv",
+            "args": []
+        }
+    }
+}
+````
+
 ## Development
 
 To add new security analysis capabilities:

@@ -80,14 +80,22 @@ func isSafePath(path string) (bool, string) {
 	
 	// Check for path traversal attempts
 	if strings.Contains(cleanPath, "..") {
-		return false, "path contains directory traversal patterns"
+		return false, "path contains directory traversal patterns - .."
 	}
-	
+	// Check for path traversal attempts
+	if strings.HasPrefix(cleanPath, ".") {
+		return false, "path contains directory traversal patterns - ."
+	}
 	// Check if the path exists
-	if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
-		return false, fmt.Sprintf("file does not exist at path: %s", cleanPath)
+	_, err := os.Stat(cleanPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, fmt.Sprintf("path does not exist: %s", cleanPath)
+		}
+		return false, fmt.Sprintf("error accessing path: %v", err)
 	}
-	
+
+	// Path exists and is accessible
 	return true, ""
 }
 
@@ -122,10 +130,10 @@ func main() {
 
 	// Add security analysis tool
 	analysisTool := mcp.NewTool("analyze_security",
-		mcp.WithDescription("Analyze code for potential security issues"),
+		mcp.WithDescription("Analyze code for potential security issues in files or directories"),
 		mcp.WithString("file_path",
 			mcp.Required(),
-			mcp.Description("Path to the file to analyze"),
+			mcp.Description("Path to the file or directory to analyze"),
 		),
 	)
 
@@ -213,89 +221,249 @@ func analyzeSecurityHandler(ctx context.Context, request mcp.CallToolRequest) (*
 	log.Printf("Received analyze_security request: %+v\n", request)
 	
 	// Input validation
-	filePath, ok := request.Params.Arguments["file_path"].(string)
+	path, ok := request.Params.Arguments["file_path"].(string)
 	if !ok {
 		return nil, fmt.Errorf("file_path must be a string")
 	}
 	
-	log.Printf("Original file path: %s\n", filePath)
-	
-	// If filePath is not absolute, make it relative to current directory
-	if !filepath.IsAbs(filePath) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get working directory: %v", err)
-		}
-		oldPath := filePath
-		filePath = filepath.Join(cwd, filePath)
-		log.Printf("Converting relative path %s to absolute path: %s (cwd: %s)\n", oldPath, filePath, cwd)
-	}
-	
 	// Clean and evaluate the path
-	cleanPath := filepath.Clean(filePath)
-	log.Printf("Cleaned path: %s\n", cleanPath)
-	
+	cleanPath := filepath.Clean(path)
 	absPath, err := filepath.Abs(cleanPath)
 	if err != nil {
-		log.Printf("Error getting absolute path: %v\n", err)
-	} else {
-		log.Printf("Absolute path: %s\n", absPath)
+		return nil, fmt.Errorf("failed to get absolute path: %v", err)
 	}
 	
-	// Path safety check
-	if safe, reason := isSafePath(filePath); !safe {
-		log.Printf("Path safety check failed: %s\n", reason)
-		return nil, fmt.Errorf("unsafe file path: %s", reason)
+	// Check if path exists and get info
+	fileInfo, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("path does not exist: %s", absPath)
+		}
+		return nil, fmt.Errorf("error accessing path: %v", err)
 	}
+
+	// Path safety check
+	if strings.Contains(absPath, "..") {
+		return nil, fmt.Errorf("unsafe path: contains directory traversal patterns")
+	}
+
+	var result strings.Builder
+	if fileInfo.IsDir() {
+		// Handle directory
+		result.WriteString(fmt.Sprintf("Security analysis for directory: %s\n\n", absPath))
+		
+		// Walk through the directory
+		err := filepath.Walk(absPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				result.WriteString(fmt.Sprintf("Error accessing %s: %v\n", path, err))
+				return nil // Continue walking
+			}
+
+			// Skip directories themselves
+			if info.IsDir() {
+				return nil
+			}
+
+			// Skip non-analyzable files
+			if !isAnalyzableFile(path) {
+				return nil
+			}
+
+			// Analyze each file
+			fileResult, err := analyzeFile(path)
+			if err != nil {
+				result.WriteString(fmt.Sprintf("Error analyzing %s: %v\n", path, err))
+				return nil // Continue walking
+			}
+
+			result.WriteString(fmt.Sprintf("\n=== %s ===\n", path))
+			result.WriteString(fileResult)
+			result.WriteString("\n")
+
+			return nil
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("error walking directory: %v", err)
+		}
+	} else {
+		// Handle single file
+		fileResult, err := analyzeFile(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("error analyzing file: %v", err)
+		}
+		result.WriteString(fileResult)
+	}
+
+	return mcp.NewToolResultText(result.String()), nil
+}
+
+func analyzeFile(filePath string) (string, error) {
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("File: %s\n", filePath))
 
 	// Read the file
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %v", err)
+		return "", fmt.Errorf("failed to read file: %v", err)
 	}
 
-	// Basic security analysis using the file content
-	result := fmt.Sprintf("Security analysis for %s:\n", filePath)
-	result += "1. Basic file analysis completed\n"
-	result += fmt.Sprintf("2. File size: %d bytes\n", len(content))
-	
-	// Additional security checks
 	contentStr := string(content)
-	result += "3. Security checks:\n"
 	
 	// Check for potential security issues
-	checks := map[string]func(string) bool{
-		"Hardcoded credentials": func(s string) bool {
-			return regexp.MustCompile(`(?i)(password|secret|key|token).*=.*['"]\w+['"]`).MatchString(s)
+	checks := map[string]struct {
+		pattern string
+		desc    string
+	}{
+		"Hardcoded credentials": {
+			pattern: `(?i)(password|secret|key|token|auth).*[=:]\s*['"][^'"]+['"]`,
+			desc:    "Potential hardcoded credentials found",
 		},
-		"SQL injection risk": func(s string) bool {
-			return regexp.MustCompile(`(?i)(select|insert|update|delete).*\+.*\+`).MatchString(s)
+		"SQL injection risk": {
+			pattern: `(?i)(select|insert|update|delete).*\+.*\+`,
+			desc:    "Possible SQL injection risk - string concatenation in query",
 		},
-		"Insecure HTTP": func(s string) bool {
-			return strings.Contains(s, "http://") && !strings.Contains(s, "http://localhost")
+		"Insecure HTTP": {
+			pattern: `http://[^/]*\.[^/]*`,
+			desc:    "Insecure HTTP URL found (not HTTPS)",
 		},
-		"File system operations": func(s string) bool {
-			return regexp.MustCompile(`os\.(Open|Create|Remove|Chmod)`).MatchString(s)
+		"Command execution": {
+			pattern: `exec\.(Command|CommandContext)`,
+			desc:    "Command execution detected - validate inputs carefully",
 		},
-		"Command execution": func(s string) bool {
-			return regexp.MustCompile(`exec\.(Command|CommandContext)`).MatchString(s)
+		"Hardcoded IPs": {
+			pattern: `\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`,
+			desc:    "Hardcoded IP address found - consider configuration",
 		},
 	}
 
-	for checkName, checkFunc := range checks {
-		if checkFunc(contentStr) {
-			result += fmt.Sprintf("   ⚠️ %s detected\n", checkName)
+	foundIssues := false
+	for checkName, check := range checks {
+		if matched, err := regexp.MatchString(check.pattern, contentStr); err == nil && matched {
+			result.WriteString(fmt.Sprintf("⚠️  %s\n   %s\n", checkName, check.desc))
+			foundIssues = true
 		}
 	}
 
-	result += "4. Recommendations:\n"
-	result += "   - Implement input validation\n"
-	result += "   - Use parameterized queries\n"
-	result += "   - Implement proper error handling\n"
-	result += "   - Use secure configuration management\n"
-	result += "   - Implement access control checks\n"
-	result += "   - Use HTTPS for external communications\n"
+	// File-specific checks
+	switch filepath.Base(filePath) {
+	case "go.mod":
+		// Check dependencies in go.mod
+		deps, err := parseGoMod(contentStr)
+		if err != nil {
+			result.WriteString(fmt.Sprintf("Error parsing go.mod: %v\n", err))
+		} else {
+			result.WriteString("\nDependency analysis:\n")
+			for _, dep := range deps {
+				// Check each dependency with OSV
+				vulns, err := checkOSVVulnerabilities(context.Background(), dep.name, dep.version)
+				if err != nil {
+					result.WriteString(fmt.Sprintf("Error checking %s@%s: %v\n", dep.name, dep.version, err))
+					continue
+				}
+				if len(vulns) > 0 {
+					result.WriteString(fmt.Sprintf("⚠️  %s@%s has %d known vulnerabilities:\n", dep.name, dep.version, len(vulns)))
+					for _, vuln := range vulns {
+						result.WriteString(fmt.Sprintf("   - %s: %s\n", vuln.ID, vuln.Summary))
+					}
+					foundIssues = true
+				}
+			}
+		}
+	}
 
-	log.Printf("Completed security analysis for %s\n", filePath)
-	return mcp.NewToolResultText(result), nil
+	if !foundIssues {
+		result.WriteString("✅ No immediate security concerns found\n")
+	}
+
+	return result.String(), nil
+}
+
+type dependency struct {
+	name    string
+	version string
+}
+
+func parseGoMod(content string) ([]dependency, error) {
+	var deps []dependency
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "require ") || (len(line) > 0 && line[0] != ' ' && strings.Contains(line, " v")) {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				deps = append(deps, dependency{
+					name:    parts[0],
+					version: parts[1],
+				})
+			}
+		}
+	}
+	return deps, nil
+}
+
+func checkOSVVulnerabilities(ctx context.Context, pkgName, version string) ([]struct{ID, Summary string}, error) {
+	// Rate limiting
+	if err := osvRateLimiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limit exceeded: %v", err)
+	}
+
+	// Query OSV.dev API
+	url := fmt.Sprintf("https://api.osv.dev/v1/query?package=%s&version=%s",
+		strings.ReplaceAll(pkgName, " ", "+"),
+		strings.ReplaceAll(version, " ", "+"))
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query OSV API: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read OSV response: %v", err)
+	}
+
+	var osvResp OSVResponse
+	if err := json.Unmarshal(body, &osvResp); err != nil {
+		return nil, fmt.Errorf("failed to parse OSV response: %v", err)
+	}
+
+	var vulns []struct{ID, Summary string}
+	for _, v := range osvResp.Vulns {
+		vulns = append(vulns, struct{ID, Summary string}{
+			ID:      v.ID,
+			Summary: v.Summary,
+		})
+	}
+	return vulns, nil
+}
+
+func isAnalyzableFile(path string) bool {
+	// List of file extensions to analyze
+	analyzableExts := map[string]bool{
+		".go":     true,
+		".mod":    true,
+		".sum":    true,
+		".json":   true,
+		".yaml":   true,
+		".yml":    true,
+		".toml":   true,
+		".env":    true,
+	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+	base := filepath.Base(path)
+	
+	// Special files
+	if base == "go.mod" || base == "go.sum" {
+		return true
+	}
+	
+	return analyzableExts[ext]
 } 
