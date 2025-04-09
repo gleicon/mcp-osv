@@ -1,7 +1,6 @@
 # MCP Security Analyst
 
 [![Go](https://github.com/gleicon/mcp-osv/actions/workflows/go.yml/badge.svg)](https://github.com/gleicon/mcp-osv/actions/workflows/go.yml)
-[![OSV](https://github.com/gleicon/mcp-osv/actions/workflows/osv-scanner.yml/badge.svg)](https://github.com/gleicon/mcp-osv/actions/workflows/osv-scanner.yml)
 
 A Model Context Protocol (MCP) server that provides security analysis capabilities by integrating with OSV.dev and AI models to help identify and analyze potential vulnerabilities in your codebase.
 
