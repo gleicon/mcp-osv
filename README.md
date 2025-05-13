@@ -12,6 +12,11 @@ A Model Context Protocol (MCP) server that provides security analysis capabiliti
 - MCP protocol support for seamless integration with various AI tools
 - Optional static code analysis using Semgrep (if installed)
 
+## Cursor/Cline and other co-pilots IDE supply-chain preventions
+
+`mcp-osv` is the ideal companion for co-pilot coding. Use the [supply-chain-security-check.mdc] ruleset in this repo or build your own to manage dependencies and reduce risk. See below how to setup your IDE.
+
+
 ## Requirements
 
 ### Core Requirements
@@ -49,7 +54,24 @@ The mcp-osv command will be installed on PATH and use the stdin/stdout method.
 
 Configure your LLM to use mcp-osv as an agent. 
 
+For ***Cursor*** use the configuration below on `configuration` -> `MCP` tab:
 
+```json
+{"mcpServers":{"security_analyst":{"name":"Security Analyst","type":"stdio","command":"/usr/local/bin/mcp-osv"}}}
+```
+
+If you are using ***Claude*** just configure it under Settings -> Developer using the config below:
+
+```json
+{
+    "mcpServers": {
+        "mcp-osv": {
+            "command": "/usr/local/bin/mcp-osv",
+            "args": []
+        }
+    }
+}
+```
 
 1. The server provides the following tools:
 

@@ -1,0 +1,3 @@
+Before adding any dependency check if it comes from an official repository such as npm.org, crates.io, pypi.org or github. If it does not comes, warn the user and require a manual confirmation. 
+For all dependencies and for all new dependencies or changes in lockfiles, run mcp-osv check_vulnerabilities action on them. Warn the user and require manual acknowledgement of any findings.
+For an existing repository run mcp-osv check_vulnerabilities on the dependencies used. Require manual approval before proceeding to other changes.
