@@ -1,3 +1,5 @@
 bin/*
 mcp-osv 
 *.db
+# Added by goreleaser init:
+dist/
