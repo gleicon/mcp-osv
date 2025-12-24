@@ -36,6 +36,8 @@ make run       # Build and execute server
 make clean     # Remove build artifacts
 ```
 
+[pre-built releases](https://github.com/gleicon/mcp-osv/releases)
+
 The mcp-osv binary communicates via stdin/stdout using the MCP protocol.
 
 ### IDE Configuration
