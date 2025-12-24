@@ -6,12 +6,12 @@ A Model Context Protocol (MCP) server providing comprehensive security analysis 
 
 ## Features
 
--- **Supply Chain Vulnerability Analysis**: Integration with OSV.dev API for dependency vulnerability assessment
--- **Secret Detection**: Gitleaks v8 integration with 100+ built-in detection rules for credentials and API keys
--- **Static Code Analysis**: AST-based Go code analysis for security anti-patterns
--- **Pattern Matching**: Regex-based detection for common security vulnerabilities
--- **MCP Protocol Support**: Standard protocol implementation for AI assistant integration
--- **Community-Vetted Rules**: Gitleaks patterns maintained by the security community
+  * **Supply Chain Vulnerability Analysis**: Integration with OSV.dev API for dependency vulnerability assessment
+  *  **Secret Detection**: Gitleaks v8 integration with 100+ built-in detection rules for credentials and API keys
+  *  **Static Code Analysis**: AST-based Go code analysis for security anti-patterns
+  * **Pattern Matching**: Regex-based detection for common security vulnerabilities
+  * **MCP Protocol Support**: Standard protocol implementation for AI assistant integration
+  *  **Community-Vetted Rules**: Gitleaks patterns maintained by the security community
 
 ## Requirements
 
@@ -22,9 +22,9 @@ make install
 ```
 
 ### Build Dependencies
--- Go 1.25.4 or later
--- github.com/mark3labs/mcp-go 
--- github.com/zricethezav/gitleaks/v8 
+  * Go 1.25.4 or later
+  * github.com/mark3labs/mcp-go 
+  * github.com/zricethezav/gitleaks/v8 
 
 ## Installation
 
@@ -80,57 +80,57 @@ The server exposes three MCP tools for security analysis:
 Query OSV.dev database for known vulnerabilities in specific package versions.
 
 **Parameters:**
--- `package_name` (string, required): Package identifier
--- `version` (string, required): Version string
+  *  `package_name` (string, required): Package identifier
+  *  `version` (string, required): Version string
 
 **Functionality:**
--- Rate-limited API requests (1 request/second)
--- HTTP timeout protection (10 seconds)
--- JSON response parsing
--- Vulnerability detail extraction
+  *  Rate-limited API requests (1 request/second)
+  *  HTTP timeout protection (10 seconds)
+  *  JSON response parsing
+  *  Vulnerability detail extraction
 
 ### analyze_security
 
 Comprehensive security analysis combining multiple detection engines.
 
 **Parameters:**
--- `file_path` (string, required): Target file or directory path
+  *  `file_path` (string, required): Target file or directory path
 
 **Analysis Components:**
--- Native Go AST-based code analysis
--- Gitleaks v8 secret detection with 100+ rules
--- OSV.dev vulnerability checks for dependencies (go.mod files)
--- Pattern-based vulnerability detection
+  *  Native Go AST-based code analysis
+  *  Gitleaks v8 secret detection with 100+ rules
+  *  OSV.dev vulnerability checks for dependencies (go.mod files)
+  *  Pattern-based vulnerability detection
 
 **Detected Issues:**
--- Command injection vectors
--- Deserialization vulnerabilities
--- SQL injection patterns
--- Hardcoded credentials
--- API keys and tokens
--- Private keys and certificates
--- Database connection strings
+  *  Command injection vectors
+  *  Deserialization vulnerabilities
+  *  SQL injection patterns
+  *  Hardcoded credentials
+  *  API keys and tokens
+  *  Private keys and certificates
+  *  Database connection strings
 
 ### scan_secrets
 
 Dedicated secret detection using Gitleaks v8 with 100+ community-maintained detection rules.
 
 **Parameters:**
--- `path` (string, required): Target file, directory, or repository path
--- `scan_git_history` (boolean, optional): Enable git history scanning (default: false)
+  *  `path` (string, required): Target file, directory, or repository path
+  *  `scan_git_history` (boolean, optional): Enable git history scanning (default: false)
 
 **Detection Capabilities (100+ patterns):**
--- AWS Access Keys, Secret Keys, Session Tokens
--- GitHub Personal Access Tokens, OAuth tokens
--- Google Cloud Platform API keys
--- Azure credentials and connection strings
--- Slack tokens and webhooks
--- Stripe API keys
--- Private SSH/PGP/RSA keys
--- JWT tokens
--- Database connection strings (PostgreSQL, MySQL, MongoDB)
--- Generic API keys with entropy analysis
--- And 90+ more patterns maintained by the security community
+  *  AWS Access Keys, Secret Keys, Session Tokens
+  *  GitHub Personal Access Tokens, OAuth tokens
+  *  Google Cloud Platform API keys
+  *  Azure credentials and connection strings
+  *  Slack tokens and webhooks
+  *  Stripe API keys
+  *  Private SSH/PGP/RSA keys
+  *  JWT tokens
+  *  Database connection strings (PostgreSQL, MySQL, MongoDB)
+  *  Generic API keys with entropy analysis
+  *  And 90+ more patterns maintained by the security community
 
 **Output:** Partial secret redaction for secure display (first 4 + last 4 characters)
 
@@ -166,21 +166,21 @@ OSV.dev API requests are rate-limited at 1 request per second using golang.org/x
 
 ### Input Validation
 All file paths undergo sanitization to prevent directory traversal attacks:
--- Path cleaning via filepath.Clean()
--- Directory traversal pattern detection
--- Existence verification
+  *  Path cleaning via filepath.Clean()
+  *  Directory traversal pattern detection
+  *  Existence verification
 
 ### Secret Redaction
 Detected secrets are partially redacted before display:
--- Secrets <= 8 characters: Full redaction
--- Secrets > 8 characters: First 4 + "***" + Last 4 characters
+  *  Secrets <= 8 characters: Full redaction
+  *  Secrets > 8 characters: First 4 + "***" + Last 4 characters
 
 ### Gitleaks Integration
 Secret detection powered by Gitleaks v8:
--- 100+ community-maintained detection rules
--- Entropy analysis for high-randomness strings
--- Keyword-based pre-filtering for performance
--- Regular updates for new secret types
+  *  100+ community-maintained detection rules
+  *  Entropy analysis for high-randomness strings
+  *  Keyword-based pre-filtering for performance
+  *  Regular updates for new secret types
 
 ### Adding Security Rules
 
