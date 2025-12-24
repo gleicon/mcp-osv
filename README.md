@@ -2,20 +2,16 @@
 
 [![Go](https://github.com/gleicon/mcp-osv/actions/workflows/go.yml/badge.svg)](https://github.com/gleicon/mcp-osv/actions/workflows/go.yml)
 
-A Model Context Protocol (MCP) server that provides security analysis capabilities by integrating with OSV.dev and AI models to help identify and analyze potential vulnerabilities in your codebase.
+A Model Context Protocol (MCP) server providing comprehensive security analysis capabilities through integration with OSV.dev vulnerability database and native Go-based code analysis and secret detection engines.
 
 ## Features
 
-- Vulnerability checking using OSV.dev database
-- Basic security analysis of code files
-- Integration with AI models for security insights
-- MCP protocol support for seamless integration with various AI tools
-- Optional static code analysis using Semgrep (if installed)
-
-## Cursor/Cline and other co-pilots IDE supply-chain preventions
-
-`mcp-osv` is the ideal companion for co-pilot coding. Use the [supply-chain-security-check.mdc] ruleset in this repo or build your own to manage dependencies and reduce risk. See below how to setup your IDE.
-
+-- **Supply Chain Vulnerability Analysis**: Integration with OSV.dev API for dependency vulnerability assessment
+-- **Secret Detection**: Gitleaks v8 integration with 100+ built-in detection rules for credentials and API keys
+-- **Static Code Analysis**: AST-based Go code analysis for security anti-patterns
+-- **Pattern Matching**: Regex-based detection for common security vulnerabilities
+-- **MCP Protocol Support**: Standard protocol implementation for AI assistant integration
+-- **Community-Vetted Rules**: Gitleaks patterns maintained by the security community
 
 ## Requirements
 
@@ -25,134 +21,176 @@ make deps
 make install
 ```
 
-### Optional: Semgrep Installation
-For enhanced static code analysis, you can install Semgrep:
-
-#### macOS
-```bash
-brew install semgrep
-```
-
-#### Linux
-```bash
-python3 -m pip install semgrep
-```
-
-#### Other platforms
-Visit [Semgrep Installation Guide](https://semgrep.dev/docs/getting-started/) for detailed instructions.
-
-The MCP server will work without Semgrep installed, but will skip the static analysis portion when analyzing directories.
+### Build Dependencies
+-- Go 1.25.4 or later
+-- github.com/mark3labs/mcp-go 
+-- github.com/zricethezav/gitleaks/v8 
 
 ## Installation
 
 ```bash
-make deps
-make install
+make deps     # Install Go module dependencies
+make build    # Compile binary
+make install  # Install to /usr/local/bin
+make run       # Build and execute server
+make clean     # Remove build artifacts
 ```
 
-The mcp-osv command will be installed on PATH and use the stdin/stdout method.
+The mcp-osv binary communicates via stdin/stdout using the MCP protocol.
 
-Configure your LLM to use mcp-osv as an agent. 
+### IDE Configuration
 
-For ***Cursor*** use the configuration below on `configuration` -> `MCP` tab:
+#### Cursor IDE
 
-```json
-{"mcpServers":{"security_analyst":{"name":"Security Analyst","type":"stdio","command":"/usr/local/bin/mcp-osv"}}}
-```
-
-If you are using ***Claude*** just configure it under Settings -> Developer using the config below:
+Navigate to Configuration > MCP and add:
 
 ```json
 {
-    "mcpServers": {
-        "mcp-osv": {
-            "command": "/usr/local/bin/mcp-osv",
-            "args": []
-        }
+  "mcpServers": {
+    "security_analyst": {
+      "name": "Security Analyst",
+      "type": "stdio",
+      "command": "/usr/local/bin/mcp-osv"
     }
+  }
 }
 ```
 
-1. The server provides the following tools:
+#### Claude Desktop
+
+Edit the MCP configuration file at Settings > Developer:
+
+```json
+{
+  "mcpServers": {
+    "mcp_osv": {
+      "command": "/usr/local/bin/mcp-osv",
+      "args": []
+    }
+  }
+}
+```
+
+## Available Tools
+
+The server exposes three MCP tools for security analysis:
 
 ### check_vulnerabilities
 
-Check for known vulnerabilities in dependencies using OSV.dev database.
+Query OSV.dev database for known vulnerabilities in specific package versions.
 
-Parameters:
+**Parameters:**
+-- `package_name` (string, required): Package identifier
+-- `version` (string, required): Version string
 
-- `package_name`: Name of the package to check
-- `version`: Version of the package to check
+**Functionality:**
+-- Rate-limited API requests (1 request/second)
+-- HTTP timeout protection (10 seconds)
+-- JSON response parsing
+-- Vulnerability detail extraction
 
 ### analyze_security
 
-Analyze code for potential security issues based on https://osv.dev - a comprehensive database of open-source vulnerabilities. 
+Comprehensive security analysis combining multiple detection engines.
 
-Parameters:
+**Parameters:**
+-- `file_path` (string, required): Target file or directory path
 
-- `file_path`: Path to the file to analyze
+**Analysis Components:**
+-- Native Go AST-based code analysis
+-- Gitleaks v8 secret detection with 100+ rules
+-- OSV.dev vulnerability checks for dependencies (go.mod files)
+-- Pattern-based vulnerability detection
 
-## Integration with AI Models
+**Detected Issues:**
+-- Command injection vectors
+-- Deserialization vulnerabilities
+-- SQL injection patterns
+-- Hardcoded credentials
+-- API keys and tokens
+-- Private keys and certificates
+-- Database connection strings
 
-This server is designed to work with AI models like Claude and Cursor through the MCP protocol. The AI models can use the provided tools to:
+### scan_secrets
 
-1. Check dependencies for known vulnerabilities
-2. Analyze code for security issues
-3. Provide recommendations for security improvements
+Dedicated secret detection using Gitleaks v8 with 100+ community-maintained detection rules.
 
-## Connecting with Cursor
+**Parameters:**
+-- `path` (string, required): Target file, directory, or repository path
+-- `scan_git_history` (boolean, optional): Enable git history scanning (default: false)
 
-### Sample output
-![output-1](screenshots/mcp-output-1.png)
-![output-2](screenshots/mcp-output-2.png)
-![output-3](screenshots/mcp-output-3.png)
+**Detection Capabilities (100+ patterns):**
+-- AWS Access Keys, Secret Keys, Session Tokens
+-- GitHub Personal Access Tokens, OAuth tokens
+-- Google Cloud Platform API keys
+-- Azure credentials and connection strings
+-- Slack tokens and webhooks
+-- Stripe API keys
+-- Private SSH/PGP/RSA keys
+-- JWT tokens
+-- Database connection strings (PostgreSQL, MySQL, MongoDB)
+-- Generic API keys with entropy analysis
+-- And 90+ more patterns maintained by the security community
 
-### Usage
+**Output:** Partial secret redaction for secure display (first 4 + last 4 characters)
 
-See mcp.json-template for an example that works with Cursor IDE.
+## Integration Patterns
 
-After the setup, restart and ask something like "Analyze the security of my project using mcp-osv". 
+The MCP server enables AI assistants to perform security analysis through natural language requests:
 
-To Debug in VSCode go to Help -> Toggle developer tools and at the console look for mcp.
-
-To test the security analysis capabilities:
-   
-
-```bash
-# Check for vulnerabilities in a package
-"Check for vulnerabilities in the package 'express' version '4.17.1'"
-
-# Analyze a specific file
-"Analyze the security of the file 'main.go'"
+**Dependency Vulnerability Scanning:**
+```
+Request: "Check dependencies in go.mod for vulnerabilities"
+Tool Execution: analyze_security -> OSV.dev API queries
+Response: Vulnerability report with CVE details
 ```
 
-The server will process your requests and provide security insights through the MCP protocol.
+**Secret Detection:**
+```
+Request: "Scan repository for exposed credentials"
+Tool Execution: scan_secrets -> Pattern matching + entropy analysis
+Response: Detected secrets with file locations and types
+```
 
+**Comprehensive Audit:**
+```
+Request: "Perform full security analysis"
+Tool Execution: analyze_security -> All detection engines
+Response: Combined report (code issues + secrets + vulnerabilities)
+```
 
-## Connect to Claude
+## Security Implementation Details
 
-Edit the config file and add the following section (that's the whole file, consider the mcp_osv section if you already have other tools installed.)
+### Rate Limiting
+OSV.dev API requests are rate-limited at 1 request per second using golang.org/x/time/rate limiter to prevent service throttling.
 
-```json
-{
-    "mcpServers": {
-        "mcp_osv": {
-            "command": "/usr/local/bin/mcp-osv",
-            "args": []
-        }
-    }
-}
-````
+### Input Validation
+All file paths undergo sanitization to prevent directory traversal attacks:
+-- Path cleaning via filepath.Clean()
+-- Directory traversal pattern detection
+-- Existence verification
 
-## Development
+### Secret Redaction
+Detected secrets are partially redacted before display:
+-- Secrets <= 8 characters: Full redaction
+-- Secrets > 8 characters: First 4 + "***" + Last 4 characters
 
-To add new security analysis capabilities:
+### Gitleaks Integration
+Secret detection powered by Gitleaks v8:
+-- 100+ community-maintained detection rules
+-- Entropy analysis for high-randomness strings
+-- Keyword-based pre-filtering for performance
+-- Regular updates for new secret types
 
-1. Create a new tool using `mcp.NewTool`
-2. Implement the tool handler
-3. Add the tool to the server using `s.AddTool`
-4. check <https://github.com/mark3labs/mcp-go> for a comprehensive framework to build MCPs in Go.
+### Adding Security Rules
+
+To extend detection capabilities:
+
+1. **Secrets and credential detection**: Gitleaks rules are maintained upstream at [gitleaks/gitleaks](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml)
+2. **Code Analysis**: Extend AST inspection in `runGoCodeAnalysis()`
+3. **Pattern Matching**: Regex patterns can be added to `analyzeFile()` checks map, create a branch and PR explaining them to get merged
 
 ## License
 
-MIT 
+MIT
+
