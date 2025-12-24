@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,6 +19,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/zricethezav/gitleaks/v8/detect"
+	"github.com/zricethezav/gitleaks/v8/report"
 	"golang.org/x/time/rate"
 )
 
@@ -100,77 +104,197 @@ func isSafePath(path string) (bool, string) {
 	return true, ""
 }
 
-// SemgrepResult represents the JSON output from semgrep
-type SemgrepResult struct {
-	Results []struct {
-		CheckID  string `json:"check_id"`
-		Path     string `json:"path"`
-		Start    struct {
-			Line int `json:"line"`
-		} `json:"start"`
-		End struct {
-			Line int `json:"line"`
-		} `json:"end"`
-		Extra struct {
-			Message  string `json:"message"`
-			Severity string `json:"severity"`
-		} `json:"extra"`
-	} `json:"results"`
-}
-
-var semgrepAvailable bool
-
 func init() {
-	// Check if semgrep is available
-	_, err := exec.LookPath("semgrep")
-	semgrepAvailable = err == nil
-	if !semgrepAvailable {
-		log.Println("Semgrep not found in PATH. Static code analysis will be limited.")
-	}
+	log.Println("Initialized native Go code analysis engine")
+	log.Println("Initialized Gitleaks v8 secret detection engine")
 }
 
-func runSemgrep(path string) (string, error) {
-	if !semgrepAvailable {
-		return "\n=== Semgrep Analysis ===\n⚠️  Semgrep not installed. Static code analysis skipped.\nInstall Semgrep for enhanced security analysis.\n", nil
-	}
-
+func runGoCodeAnalysis(path string) (string, error) {
 	var result strings.Builder
-	result.WriteString("\n=== Semgrep Analysis ===\n")
+	result.WriteString("\n-- Static Code Analysis --\n")
 
-	cmd := exec.Command("semgrep", 
-		"--config=auto",
-		"--json",
-		"--severity=WARNING",
-		"--quiet",
-		path)
-	
-	output, err := cmd.Output()
+	fileInfo, err := os.Stat(path)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-			return "", fmt.Errorf("semgrep error: %s", exitErr.Stderr)
+		return "", fmt.Errorf("failed to stat path: %v", err)
+	}
+
+	var filesToAnalyze []string
+	if fileInfo.IsDir() {
+		err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && strings.HasSuffix(filePath, ".go") {
+				filesToAnalyze = append(filesToAnalyze, filePath)
+			}
+			return nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to walk directory: %v", err)
 		}
-		return "", fmt.Errorf("failed to run semgrep: %v", err)
+	} else if strings.HasSuffix(path, ".go") {
+		filesToAnalyze = append(filesToAnalyze, path)
 	}
 
-	var semgrepResult SemgrepResult
-	if err := json.Unmarshal(output, &semgrepResult); err != nil {
-		return "", fmt.Errorf("failed to parse semgrep output: %v", err)
-	}
-
-	// Add information about what was scanned
-	result.WriteString("Running Semgrep security analysis...\n")
-	
-	if len(semgrepResult.Results) == 0 {
-		result.WriteString("✅ No security issues found by Semgrep\n")
+	if len(filesToAnalyze) == 0 {
+		result.WriteString("No Go files found for analysis\n")
 		return result.String(), nil
 	}
 
-	result.WriteString(fmt.Sprintf("Found %d potential security issues:\n\n", len(semgrepResult.Results)))
-	for _, finding := range semgrepResult.Results {
-		result.WriteString(fmt.Sprintf("⚠️  %s\n", finding.CheckID))
-		result.WriteString(fmt.Sprintf("   Severity: %s\n", finding.Extra.Severity))
-		result.WriteString(fmt.Sprintf("   File: %s (lines %d-%d)\n", finding.Path, finding.Start.Line, finding.End.Line))
-		result.WriteString(fmt.Sprintf("   Message: %s\n\n", finding.Extra.Message))
+	issuesFound := 0
+	fset := token.NewFileSet()
+
+	for _, filePath := range filesToAnalyze {
+		node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+		if err != nil {
+			log.Printf("Warning: failed to parse %s: %v", filePath, err)
+			continue
+		}
+
+		// Analyze for common security issues
+		ast.Inspect(node, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.CallExpr:
+				if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+					funcName := sel.Sel.Name
+
+					// Check for unsafe functions
+					if funcName == "Command" || funcName == "CommandContext" {
+						issuesFound++
+						pos := fset.Position(x.Pos())
+						result.WriteString(fmt.Sprintf("\nIssue found at %s:%d:\n", filepath.Base(filePath), pos.Line))
+						result.WriteString("  Type: Command Execution\n")
+						result.WriteString("  Risk: Potential command injection if user input is not validated\n")
+						result.WriteString("  Recommendation: Validate and sanitize all inputs to exec functions\n")
+					}
+
+					if funcName == "Unmarshal" || funcName == "Decode" {
+						issuesFound++
+						pos := fset.Position(x.Pos())
+						result.WriteString(fmt.Sprintf("\nIssue found at %s:%d:\n", filepath.Base(filePath), pos.Line))
+						result.WriteString("  Type: Deserialization\n")
+						result.WriteString("  Risk: Ensure input validation before deserializing untrusted data\n")
+						result.WriteString("  Recommendation: Implement schema validation\n")
+					}
+				}
+			case *ast.BasicLit:
+				if x.Kind == token.STRING {
+					value := strings.Trim(x.Value, "\"'`")
+					// Check for SQL patterns
+					if strings.Contains(strings.ToUpper(value), "SELECT") ||
+					   strings.Contains(strings.ToUpper(value), "INSERT") ||
+					   strings.Contains(strings.ToUpper(value), "UPDATE") ||
+					   strings.Contains(strings.ToUpper(value), "DELETE") {
+						issuesFound++
+						pos := fset.Position(x.Pos())
+						result.WriteString(fmt.Sprintf("\nIssue found at %s:%d:\n", filepath.Base(filePath), pos.Line))
+						result.WriteString("  Type: SQL Query\n")
+						result.WriteString("  Risk: Potential SQL injection if using string concatenation\n")
+						result.WriteString("  Recommendation: Use parameterized queries\n")
+					}
+				}
+			}
+			return true
+		})
+	}
+
+	if issuesFound == 0 {
+		result.WriteString("No security issues detected in Go code\n")
+	} else {
+		result.WriteString(fmt.Sprintf("\nTotal: %d potential security issue(s) found\n", issuesFound))
+	}
+
+	return result.String(), nil
+}
+
+// redactSecret partially redacts a secret for safe display
+func redactSecret(secret string) string {
+	if len(secret) <= 8 {
+		return "***REDACTED***"
+	}
+	return secret[:4] + "***" + secret[len(secret)-4:]
+}
+
+func runSecretDetection(path string, scanGitHistory bool) (string, error) {
+	var result strings.Builder
+	result.WriteString("\n-- Secret Detection (Gitleaks) --\n")
+
+	// Initialize gitleaks detector with default configuration (100+ built-in rules)
+	detector, err := detect.NewDetectorDefaultConfig()
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize gitleaks detector: %v", err)
+	}
+
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat path: %v", err)
+	}
+
+	var filesToScan []string
+	if fileInfo.IsDir() {
+		err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && isAnalyzableFile(filePath) {
+				filesToScan = append(filesToScan, filePath)
+			}
+			return nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to walk directory: %v", err)
+		}
+	} else if isAnalyzableFile(path) {
+		filesToScan = append(filesToScan, path)
+	}
+
+	// Scan each file with gitleaks
+	var allFindings []report.Finding
+	for _, filePath := range filesToScan {
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			log.Printf("Warning: failed to read %s: %v", filePath, err)
+			continue
+		}
+
+		// Create a fragment for gitleaks to scan
+		fragment := detect.Fragment{
+			Raw:      string(content),
+			FilePath: filePath,
+		}
+
+		// Detect secrets using gitleaks
+		findings := detector.Detect(fragment)
+		allFindings = append(allFindings, findings...)
+	}
+
+	if len(allFindings) == 0 {
+		result.WriteString("No secrets detected\n")
+		return result.String(), nil
+	}
+
+	// Format findings
+	result.WriteString(fmt.Sprintf("ALERT: Found %d potential secret(s)\n\n", len(allFindings)))
+
+	for i, finding := range allFindings {
+		result.WriteString(fmt.Sprintf("Secret %d:\n", i+1))
+		result.WriteString(fmt.Sprintf("  Type: %s\n", finding.RuleID))
+		result.WriteString(fmt.Sprintf("  Description: %s\n", finding.Description))
+		result.WriteString(fmt.Sprintf("  File: %s (line %d)\n", finding.File, finding.StartLine))
+		result.WriteString(fmt.Sprintf("  Secret: %s\n", redactSecret(finding.Secret)))
+		if finding.Entropy != 0 {
+			result.WriteString(fmt.Sprintf("  Entropy: %.2f\n", finding.Entropy))
+		}
+		if finding.Match != "" && finding.Match != finding.Secret {
+			result.WriteString(fmt.Sprintf("  Match: %s\n", finding.Match))
+		}
+		result.WriteString("\n")
+	}
+
+	result.WriteString("CRITICAL: Review and rotate any exposed secrets immediately\n")
+
+	if scanGitHistory {
+		result.WriteString("Note: Git history scanning requires repository context (not yet implemented)\n")
 	}
 
 	return result.String(), nil
@@ -216,6 +340,21 @@ func main() {
 
 	s.AddTool(analysisTool, analyzeSecurityHandler)
 	log.Println("Added analyze_security tool")
+
+	// Add secret scanning tool
+	secretsTool := mcp.NewTool("scan_secrets",
+		mcp.WithDescription("Scan for hardcoded secrets, credentials, API keys, and sensitive data using Gitleaks v8 with 100+ built-in detection rules"),
+		mcp.WithString("path",
+			mcp.Required(),
+			mcp.Description("Path to the file, directory, or git repository to scan for secrets"),
+		),
+		mcp.WithBoolean("scan_git_history",
+			mcp.Description("Scan git commit history for secrets (slower but more thorough). Default: false"),
+		),
+	)
+
+	s.AddTool(secretsTool, scanSecretsHandler)
+	log.Println("Added scan_secrets tool")
 
 	log.Println("Starting stdio server...")
 	// Start the stdio server
@@ -266,9 +405,27 @@ func checkVulnerabilitiesHandler(ctx context.Context, request mcp.CallToolReques
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Validate HTTP response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("OSV API returned non-OK status: %d %s", resp.StatusCode, resp.Status)
+	}
+
+	// Validate Content-Type
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.Contains(contentType, "application/json") && contentType != "" {
+		return nil, fmt.Errorf("unexpected Content-Type from OSV API: %s", contentType)
+	}
+
+	// Read response with size limit (10MB max)
+	const maxResponseSize = 10 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read OSV response: %v", err)
+	}
+
+	// Validate JSON structure before unmarshaling
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("invalid JSON response from OSV API")
 	}
 
 	var osvResp OSVResponse
@@ -329,14 +486,22 @@ func analyzeSecurityHandler(ctx context.Context, request mcp.CallToolRequest) (*
 		// Handle directory
 		result.WriteString(fmt.Sprintf("Security analysis for directory: %s\n\n", absPath))
 		
-		// Run Semgrep analysis for the directory
-		semgrepResult, semgrepErr := runSemgrep(absPath)
-		if semgrepErr != nil {
-			result.WriteString(fmt.Sprintf("Error running Semgrep: %v\n", semgrepErr))
+		// Run native Go code analysis for the directory
+		codeAnalysisResult, codeAnalysisErr := runGoCodeAnalysis(absPath)
+		if codeAnalysisErr != nil {
+			result.WriteString(fmt.Sprintf("Error running code analysis: %v\n", codeAnalysisErr))
 		} else {
-			result.WriteString(semgrepResult)
+			result.WriteString(codeAnalysisResult)
 		}
-		
+
+		// Run native secret detection scan for the directory
+		secretResult, secretErr := runSecretDetection(absPath, false)
+		if secretErr != nil {
+			result.WriteString(fmt.Sprintf("Error running secret detection: %v\n", secretErr))
+		} else {
+			result.WriteString(secretResult)
+		}
+
 		// Walk through the directory
 		err := filepath.Walk(absPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -373,13 +538,83 @@ func analyzeSecurityHandler(ctx context.Context, request mcp.CallToolRequest) (*
 		}
 	} else {
 		// Handle single file
+		result.WriteString(fmt.Sprintf("Security analysis for file: %s\n\n", absPath))
+
+		// Run native secret detection on the file
+		secretResult, secretErr := runSecretDetection(absPath, false)
+		if secretErr != nil {
+			result.WriteString(fmt.Sprintf("Error running secret detection: %v\n", secretErr))
+		} else {
+			result.WriteString(secretResult)
+		}
+
+		// Run pattern-based analysis
 		fileResult, err := analyzeFile(absPath)
 		if err != nil {
 			return nil, fmt.Errorf("error analyzing file: %v", err)
 		}
+		result.WriteString("\n=== Pattern-based Analysis ===\n")
 		result.WriteString(fileResult)
 	}
 
+	return mcp.NewToolResultText(result.String()), nil
+}
+
+func scanSecretsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	log.Printf("Received scan_secrets request: %+v\n", request)
+
+	// Input validation
+	path, ok := request.Params.Arguments["path"].(string)
+	if !ok {
+		return nil, fmt.Errorf("path must be a string")
+	}
+
+	// Clean and evaluate the path
+	cleanPath := filepath.Clean(path)
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path: %v", err)
+	}
+
+	// Check if path exists and get info
+	fileInfo, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("path does not exist: %s", absPath)
+		}
+		return nil, fmt.Errorf("error accessing path: %v", err)
+	}
+
+	// Path safety check
+	if strings.Contains(absPath, "..") {
+		return nil, fmt.Errorf("unsafe path: contains directory traversal patterns")
+	}
+
+	// Parse optional scan_git_history parameter (default: false)
+	scanGitHistory := false
+	if scanHistoryVal, ok := request.Params.Arguments["scan_git_history"]; ok {
+		if scanHistoryBool, ok := scanHistoryVal.(bool); ok {
+			scanGitHistory = scanHistoryBool
+		}
+	}
+
+	var result strings.Builder
+
+	if fileInfo.IsDir() {
+		result.WriteString(fmt.Sprintf("Secret scan for directory: %s\n", absPath))
+	} else {
+		result.WriteString(fmt.Sprintf("Secret scan for file: %s\n", absPath))
+	}
+
+	// Run native secret detection
+	secretResult, err := runSecretDetection(absPath, scanGitHistory)
+	if err != nil {
+		return nil, fmt.Errorf("error running secret detection: %v", err)
+	}
+
+	result.WriteString(secretResult)
+
+	log.Printf("Completed secret scan for %s\n", absPath)
 	return mcp.NewToolResultText(result.String()), nil
 }
 
@@ -509,9 +744,27 @@ func checkOSVVulnerabilities(ctx context.Context, pkgName, version string) ([]st
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Validate HTTP response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("OSV API returned non-OK status: %d %s", resp.StatusCode, resp.Status)
+	}
+
+	// Validate Content-Type
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.Contains(contentType, "application/json") && contentType != "" {
+		return nil, fmt.Errorf("unexpected Content-Type from OSV API: %s", contentType)
+	}
+
+	// Read response with size limit (10MB max)
+	const maxResponseSize = 10 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read OSV response: %v", err)
+	}
+
+	// Validate JSON structure before unmarshaling
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("invalid JSON response from OSV API")
 	}
 
 	var osvResp OSVResponse

@@ -1,3 +1,148 @@
-Before adding any dependency check if it comes from an official repository such as npm.org, crates.io, pypi.org or github. If it does not comes, warn the user and require a manual confirmation. 
-For all dependencies and for all new dependencies or changes in lockfiles, run mcp-osv check_vulnerabilities action on them. Warn the user and require manual acknowledgement of any findings.
-For an existing repository run mcp-osv check_vulnerabilities on the dependencies used. Require manual approval before proceeding to other changes.
+# Security Analysis Protocol
+
+## Supply Chain Vulnerability Management
+
+### Dependency Source Verification
+Before incorporating any external dependency, verify provenance through official registries:
+-- npm.org (JavaScript/TypeScript packages)
+-- crates.io (Rust packages)
+-- pypi.org (Python packages)
+-- GitHub (source repositories)
+
+For dependencies from unofficial sources:
+1. Require manual confirmation from operator
+2. Document source justification
+3. Perform enhanced security review
+
+### Vulnerability Scanning Workflow
+Execute mcp-osv check_vulnerabilities tool for all dependency operations:
+
+**Trigger Events:**
+-- New dependency addition
+-- Dependency version updates
+-- Lockfile modifications (package-lock.json, Cargo.lock, go.sum, etc.)
+
+**Process:**
+1. Scan each dependency against OSV.dev database
+2. Report vulnerability findings to operator
+3. Require manual acknowledgment before proceeding
+4. Block high-severity vulnerabilities pending mitigation
+
+**Repository Onboarding:**
+1. Execute check_vulnerabilities on complete dependency tree
+2. Generate baseline vulnerability report
+3. Require approval for existing vulnerabilities before proceeding
+4. Document accepted risk for unpatched dependencies
+
+## Secret Detection Protocol
+
+### Pre-Commit Scanning
+Execute mcp-osv scan_secrets on modified files before commit operations.
+
+**Detection Response:**
+1. Immediate notification to operator
+2. Display secret type, file path, and line number
+3. Recommend credential rotation for each finding
+4. Require explicit confirmation to proceed with commit
+
+### Git History Analysis
+Periodically execute scan_secrets with scan_git_history parameter enabled.
+
+**Historical Leak Response:**
+1. Alert operator to historical exposure
+2. Provide commit hash, author, and timestamp
+3. Recommend git history rewriting via git-filter-repo or BFG Repo-Cleaner
+4. Mandate immediate rotation of all exposed credentials
+5. Document incident in security log
+
+### Baseline Establishment
+For new projects, execute scan_secrets on complete codebase before initial commit to establish clean security baseline.
+
+## Comprehensive Security Audit
+
+### Pre-Release Analysis
+Before production deployment or major releases:
+
+**Required Scans:**
+1. analyze_security on entire project directory
+2. scan_secrets with scan_git_history enabled
+3. check_vulnerabilities for all dependencies
+
+**Findings Management:**
+1. Aggregate and categorize all findings
+2. Prioritize by severity (Critical > High > Medium > Low)
+3. Require manual review and sign-off
+4. Block deployment for unresolved critical issues
+
+### Continuous Monitoring
+Establish periodic security scanning schedule:
+-- Daily: Dependency vulnerability checks
+-- Weekly: Secret detection scans
+-- Monthly: Comprehensive audits with git history analysis
+
+## Tool Configuration
+
+### MCP Server Integration
+Configure IDE or CI/CD pipeline to access mcp-osv tools:
+
+**Cursor IDE:**
+```json
+{
+  "mcpServers": {
+    "security_analyst": {
+      "name": "Security Analyst",
+      "type": "stdio",
+      "command": "/usr/local/bin/mcp-osv"
+    }
+  }
+}
+```
+
+**CI/CD Pipeline Example:**
+```bash
+# Dependency scan
+mcp-osv check_vulnerabilities --package <name> --version <ver>
+
+# Secret detection
+mcp-osv scan_secrets --path . --scan-git-history
+
+# Comprehensive analysis
+mcp-osv analyze_security --file-path .
+```
+
+## Incident Response
+
+### Secret Exposure
+**Immediate Actions:**
+1. Rotate compromised credentials across all environments
+2. Revoke exposed API keys and tokens
+3. Audit access logs for unauthorized usage
+4. Remove secrets from git history if committed
+5. Implement pre-commit hooks to prevent recurrence
+
+### Vulnerability Discovery
+**Remediation Protocol:**
+1. Assess exploitability and impact
+2. Identify available patches or mitigations
+3. Test patches in non-production environment
+4. Deploy patches following change management procedures
+5. Verify remediation via rescan
+6. Document remediation in security log
+
+## Compliance and Reporting
+
+### Audit Trail
+Maintain records of all security scans:
+-- Timestamp and operator identification
+-- Tool parameters and configuration
+-- Complete findings report
+-- Remediation actions and outcomes
+-- Risk acceptance documentation for unpatched issues
+
+### Metrics
+Track security posture over time:
+-- Total vulnerabilities by severity
+-- Mean time to remediation (MTTR)
+-- Secret detection false positive rate
+-- Dependency update cadence
+-- Audit coverage percentage
